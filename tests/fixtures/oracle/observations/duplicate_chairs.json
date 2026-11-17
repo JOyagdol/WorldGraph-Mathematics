@@ -1,0 +1,16 @@
+{
+  "schema_version": "synthetic_observation_v1",
+  "metadata": {
+    "source_type": "synthetic_fixture",
+    "note": "Constructed partial observation for checking joint instance correspondence. Both relations must use the same observed chair; category counts alone do not distinguish candidates. No image or annotation validation is implied."
+  },
+  "objects": [
+    {"alias": "seat_a", "type": "BuildingFurniture", "category": "chair", "confidence": 1.0, "visibility": 1.0},
+    {"alias": "seat_b", "type": "BuildingFurniture", "category": "chair", "confidence": 1.0, "visibility": 1.0},
+    {"alias": "worktop", "type": "BuildingFurniture", "category": "table", "confidence": 1.0, "visibility": 1.0}
+  ],
+  "relations": [
+    {"source": "seat_a", "type": "TOUCHES", "target": "worktop", "weight": 1.0},
+    {"source": "seat_a", "type": "ABOVE", "target": "seat_b", "weight": 1.0}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "synthetic_observation_v1",
+  "metadata": {
+    "source_type": "synthetic_fixture",
+    "note": "Constructed single-object observation with an unknown-Room membership relation. Tests the refrigerator-to-fridge alias without revealing a map instance or target Room ID."
+  },
+  "objects": [
+    {"alias": "appliance", "type": "BuildingFurniture", "category": "refrigerator", "confidence": 0.9, "visibility": 1.0}
+  ],
+  "relations": [
+    {"source": "appliance", "type": "INSIDE", "target": "Room", "weight": 0.9}
+  ]
+}

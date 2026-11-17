@@ -1,0 +1,22 @@
+project:
+  name: citygml-scene-graph
+  # v1 research baseline; keep 2.0 default until 3.0 parsing scope is enabled.
+  citygml_version: "2.0"
+
+pipeline:
+  input_path: data/input
+  output_path: data/output
+  enable_relations: true
+
+spatial:
+  # AABB-based spatial inference thresholds.
+  touch_epsilon: 0.05
+  adjacent_epsilon: 0.50
+  intersection_epsilon: 0.000001
+
+neo4j:
+  uri: bolt://localhost:7687
+  username: neo4j
+  password: <your-password>
+  database: neo4j
+  batch_size: 5000

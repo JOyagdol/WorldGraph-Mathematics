@@ -1,0 +1,13 @@
+{
+  "source_repository": "https://github.com/JOyagdol/3DCitySG",
+  "source_base_commit": "def5dc2adad4db058fbf44fc97d0ae932eabd210",
+  "source_branch": "codex/oracle-evaluation",
+  "snapshot_kind": "current_working_tree_including_uncommitted_changes",
+  "source_file_count": 240,
+  "note": "Base commit alone does not contain the inherited Oracle implementation. Detailed content hashes and local-data provenance are retained privately.",
+  "migration_date": "2026-11-17",
+  "method_status": {
+    "legacy": "inherited baseline",
+    "joint_evidence_v1_proposed": "implementation candidate; not automatically the manuscript method"
+  }
+}

@@ -1,0 +1,33 @@
+# Engineering defaults for an implementation candidate, not calibrated parameters.
+method:
+  version: joint_evidence_v1_proposed
+  alpha: 1.0
+  beta: 1.0
+  anchor_threshold: 0.0
+  max_states: 100000
+  solver_mode: exact_reference
+  score_tie_decimals: 12
+  missing_stored_metadata: report_error
+  node_scoring_labels: [Furniture, Installation, Opening]
+  category_weight: room_idf
+  relation_compatibility:
+    ADJACENT_TO: [TOUCHES, INTERSECTS]
+    TOUCHES: [INTERSECTS]
+  symmetric_relations: [ADJACENT_TO, TOUCHES, INTERSECTS, ADJACENT_SURFACE]
+  inverse_relations:
+    ABOVE: BELOW
+    BELOW: ABOVE
+variants: [full, objects_only, relations_only, uniform_category, boolean_metadata]
+timing:
+  warmup: 3
+  repeat: 30
+  seed: 0
+  reference_cache: preload
+  primary: warm_online_retrieval
+protocol:
+  task: closed_set_single_gt_room
+  experiment_stage: oracle_preparation
+  input_condition: researcher_curated
+  oracle_validation_status: pending
+  require_full_ranking: true
+  mtr_policy: N_plus_1_on_retrieval_abstention

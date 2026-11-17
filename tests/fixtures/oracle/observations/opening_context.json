@@ -1,0 +1,18 @@
+{
+  "schema_version": "synthetic_observation_v1",
+  "metadata": {
+    "source_type": "synthetic_fixture",
+    "note": "Constructed opening and surface-context observation for testing subtype normalization, hosting, and connection to an unknown Room. Surface context is not an independently scored object."
+  },
+  "objects": [
+    {"alias": "visible_window", "type": "Opening", "category": "window", "confidence": 1.0, "visibility": 1.0},
+    {"alias": "visible_door", "type": "Opening", "category": "door", "confidence": 1.0, "visibility": 1.0},
+    {"alias": "wall_patch", "type": "BoundarySurface", "subtype": "WallSurface", "category": "wall_surface", "confidence": 1.0, "visibility": 1.0}
+  ],
+  "relations": [
+    {"source": "visible_window", "type": "HOSTED_BY", "target": "wall_patch", "weight": 1.0},
+    {"source": "visible_door", "type": "HOSTED_BY", "target": "wall_patch", "weight": 1.0},
+    {"source": "visible_door", "type": "CONNECTS", "target": "Room", "weight": 1.0},
+    {"source": "wall_patch", "type": "ADJACENT_SURFACE", "target": "FloorSurface", "weight": 1.0}
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "manifest_version": "oracle_evaluation_v1",
+  "description": "Synthetic implementation fixture only. These hand-authored graphs are not image observations or empirical Oracle results. Target IDs name invented Rooms. No expected scores or measured outcomes are stored.",
+  "experiment_stage": "oracle_preparation",
+  "input_condition": "synthetic_fixture",
+  "oracle_validation_status": "not_applicable",
+  "annotation_protocol_version": "synthetic_graph_fixture_v1",
+  "validation_evidence": null,
+  "source_type": "synthetic_fixture",
+  "protocol": "closed_set_single_gt_room",
+  "graph_snapshot_id": "synthetic_reference_v1",
+  "candidate_pool_id": "synthetic_three_rooms_v1",
+  "candidate_ids": ["synthetic_room_a", "synthetic_room_b", "synthetic_room_c"],
+  "cases": [
+    {
+      "query_id": "synthetic_duplicate_chairs",
+      "ovg_path": "tests/fixtures/oracle/observations/duplicate_chairs.json",
+      "target_room_id": "synthetic_room_a",
+      "view_id": "synthetic_partial_graph_01"
+    },
+    {
+      "query_id": "synthetic_opening_context",
+      "ovg_path": "tests/fixtures/oracle/observations/opening_context.json",
+      "target_room_id": "synthetic_room_c",
+      "view_id": "synthetic_partial_graph_02"
+    },
+    {
+      "query_id": "synthetic_single_appliance",
+      "ovg_path": "tests/fixtures/oracle/observations/single_appliance.json",
+      "target_room_id": "synthetic_room_c",
+      "view_id": "synthetic_partial_graph_03"
+    }
+  ]
+}

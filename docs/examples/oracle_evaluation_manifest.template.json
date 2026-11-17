@@ -1,0 +1,37 @@
+{
+  "manifest_version": "oracle_evaluation_v1",
+  "experiment_stage": "oracle_preparation",
+  "input_condition": "researcher_curated",
+  "oracle_validation_status": "pending",
+  "annotation_protocol_version": null,
+  "validation_evidence": null,
+  "protocol": "closed_set_single_gt_room",
+  "graph_snapshot_id": null,
+  "candidate_pool_id": null,
+  "cases": [
+    {
+      "query_id": "kitchen_view",
+      "ovg_path": "docs/examples/observed_view_graph_kitchen.json",
+      "target_room_id": null,
+      "target_room_name_hint": "E103",
+      "view_id": null,
+      "source_type": "to_verify"
+    },
+    {
+      "query_id": "living_tv_sofa_view",
+      "ovg_path": "docs/examples/observed_view_graph_e_type_living_tv_sofa.json",
+      "target_room_id": null,
+      "target_room_name_hint": "E102",
+      "view_id": null,
+      "source_type": "to_verify"
+    },
+    {
+      "query_id": "sparse_window_view",
+      "ovg_path": "docs/examples/observed_view_graph_e_type_empty_window_room.json",
+      "target_room_id": null,
+      "target_room_name_hint": "E204",
+      "view_id": null,
+      "source_type": "to_verify"
+    }
+  ]
+}
