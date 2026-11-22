@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from citygml_sg.retrieval import oracle_runner as runner
-from citygml_sg.retrieval.evaluation.oracle_metrics import VARIANT_IDS
+from citygml_sg.retrieval.evaluation.oracle_metrics import CONTENT_IDENTITY_FIELDS, VARIANT_IDS
 
 
 @pytest.fixture(autouse=True)
@@ -112,7 +112,7 @@ def test_synthetic_five_variant_run_exports_complete_metrics_and_raw_repeats(tmp
     assert resolved["method"]["max_states"] == 100000
     assert result["config_sha256"] == runner.content_hash(resolved)
     assert result["normalization_versions"]["observation"] == "semantic_observation_v1"
-    assert result["normalization_versions"]["reference"] == "semantic_reference_v1"
+    assert result["normalization_versions"]["reference"] == "semantic_reference_v2_fridge_compounds"
     pool = _json(output / "candidate_pool.json")
     room = pool["rooms"][0]
     assert room["room_id"] == "A"
@@ -121,6 +121,8 @@ def test_synthetic_five_variant_run_exports_complete_metrics_and_raw_repeats(tmp
     assert result["effective_methods_by_variant"]["objects_only"]["beta"] == 0
     assert result["effective_methods_by_variant"]["relations_only"]["alpha"] == 0
     metrics = _json(output / "metrics_by_variant.json")
+    assert metrics["identity_validation"]["status"] == "declared_identity_consistent"
+    evaluated = _json(output / "evaluated_queries.json")["records"]
     for variant in VARIANT_IDS:
         assert metrics["by_variant"][variant]["query_count"] == 1
         assert metrics["by_variant"][variant]["recall_at_1"] == 1
@@ -131,6 +133,12 @@ def test_synthetic_five_variant_run_exports_complete_metrics_and_raw_repeats(tmp
         assert report["schema_load_scope"] == "file_read_json_parse_and_sha256"
         assert "target_room_id" not in report["anchors"]
         assert report["evaluation"]["target_room_id"] == "A"
+        record = next(item for item in evaluated if item["variant_id"] == variant)
+        for field in CONTENT_IDENTITY_FIELDS:
+            assert record[field] == report["evaluation"][field] == report[field]
+        assert record["code_provenance"] == result["git"]
+        assert record["config_sha256"] == result["config_sha256"]
+        assert record["graph_snapshot_sha256"] == result["graph_snapshot_sha256"]
     logs = [json.loads(line) for line in
             (output / "timing_runs.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(logs) == 5 * (1 + 1 + 2)
@@ -268,6 +276,8 @@ def test_metric_contract_failure_keeps_invalid_report_and_null_metrics(tmp_path,
     assert report["invalid_report"]["candidate_count"] == 2
     assert report["evaluation"]["mrr"] is None
     assert report["timing_stats"]["status"] == "incomplete"
+    record = _json(output / "evaluated_queries.json")["records"][0]
+    assert all(record[field] == report[field] for field in CONTENT_IDENTITY_FIELDS)
 
 
 def test_unproven_solver_stops_repeats_without_a_zero_latency(tmp_path, monkeypatch) -> None:

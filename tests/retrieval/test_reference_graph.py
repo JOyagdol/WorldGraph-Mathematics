@@ -200,6 +200,46 @@ def test_distinct_kitchen_categories_and_original_surface_type_are_preserved() -
     assert normalized["original_subtype"] == "GroundSurface"
 
 
+@pytest.mark.parametrize("product_name", [
+    "Brand-Model42-IntegratedFrenchDoorFridgeFreezer-NZ:Default:1234",
+    "BuiltInRefrigerator:Model42",
+    "IntegratedFRIDGEFreezer",
+    "UnderCounterFreezer",
+])
+@pytest.mark.parametrize("field", ["gml_name", "attr_ifc_object_type", "attr_other_family"])
+def test_furniture_compound_fridge_names_normalize_without_mutation(
+    product_name: str, field: str,
+) -> None:
+    raw = node("appliance", "BuildingFurniture", **{field: product_name})
+    original = deepcopy(raw)
+    normalized = normalize_semantic_node(raw)
+    assert normalized["category"] == "fridge"
+    assert normalize_semantic_node(normalized) == normalized
+    assert raw == original
+
+
+@pytest.mark.parametrize("product_name", ["Refrigeratorish", "RefrigeratedPanel", "RefrigerationUnit"])
+def test_fridge_name_detection_does_not_match_arbitrary_substrings(product_name: str) -> None:
+    normalized = normalize_semantic_node(node("f", "Furniture", gml_name=product_name))
+    assert normalized["category"] == product_name.lower()
+
+
+def test_compound_fridge_rule_preserves_category_precedence_and_other_labels() -> None:
+    explicit = node("f", "Furniture", category="storage", gml_name="IntegratedFridgeFreezer")
+    assert normalize_semantic_node(explicit)["category"] == "storage"
+    ordered = node("f", "Furniture", gml_name="storage IntegratedFridgeFreezer")
+    assert normalize_semantic_node(ordered)["category"] == "storage"
+    installation = node("i", "Installation", gml_name="IntegratedFridgeFreezer")
+    assert normalize_semantic_node(installation)["category"] == "integratedfridgefreezer"
+    assert normalize_semantic_node(node("r", "Room", gml_name="IntegratedFridgeFreezer"))[
+        "category"
+    ] == "room"
+    # Splitting is limited to fridge synonyms, not a new general product taxonomy.
+    assert normalize_semantic_node(node("f", "Furniture", gml_name="DiningTable"))[
+        "category"
+    ] == "diningtable"
+
+
 def test_category_does_not_leak_from_identifier_or_room_name() -> None:
     assert normalize_semantic_node(node("sofa_E102", "BuildingFurniture"))["category"] == "unknown"
     assert normalize_semantic_node(node("r", "Room", gml_name="kitchen_E102"))["category"] == "room"

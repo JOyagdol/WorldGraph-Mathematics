@@ -27,7 +27,7 @@ from citygml_sg.relations.spatial_scope import (
 )
 
 
-NORMALIZATION_VERSION = "semantic_reference_v1"
+NORMALIZATION_VERSION = "semantic_reference_v2_fridge_compounds"
 MEMBERSHIP_POLICY = "typed_room_paths_v1"
 BASE_EDGE_POLICY = "citygml_semantic_hierarchy_v1"
 GEOMETRY_TYPES = frozenset({
@@ -72,6 +72,7 @@ CATEGORY_KEYWORDS = (
     ("table", ("table",)), ("chair", ("chair",)), ("bed", ("bed",)),
     ("column", ("column", "pillar", "기둥")),
 )
+FRIDGE_COMPOUND_TOKENS = frozenset({"fridge", "freezer", "refrigerator"})
 SEMANTIC_TYPES = frozenset(LABEL_ALIASES) | frozenset(SURFACE_CATEGORIES)
 PREFETCH_TYPES = SEMANTIC_TYPES | {"Building", "BuildingPart"}
 NODE_TYPE_ALIASES = {name.casefold(): name for name in PREFETCH_TYPES | GEOMETRY_TYPES}
@@ -113,6 +114,7 @@ def normalize_semantic_node(raw: dict[str, Any]) -> dict[str, Any]:
 
     Explicit categories take precedence. Otherwise named semantic fields use an
     ordered, token-based vocabulary; sink/counter/cabinet/storage stay distinct.
+    Furniture product names also expose fridge synonyms at CamelCase boundaries.
     Unknown names remain normalized text (or ``unknown``), not discarded nodes.
     Surface subtype canonicalization retains ``original_subtype`` for auditing.
     """
@@ -149,6 +151,14 @@ def normalize_semantic_node(raw: dict[str, Any]) -> dict[str, Any]:
         values = [str(props.get(key) or raw.get(key) or "") for key in fields]
         text = re.sub(r"[_\-\s]+", " ", " ".join(values)).strip().lower()
         tokens = set(re.findall(r"[^\W_]+", text, flags=re.UNICODE))
+        if label == "Furniture":
+            # Imported product families may concatenate words, e.g.
+            # IntegratedFrenchDoorFridgeFreezer. Split before lowercasing;
+            # retain only fridge synonyms so other category rules stay fixed.
+            compound_text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", " ".join(values))
+            compound_text = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", compound_text)
+            compound_tokens = set(re.findall(r"[^\W_]+", compound_text.lower(), flags=re.UNICODE))
+            tokens.update(compound_tokens.intersection(FRIDGE_COMPOUND_TOKENS))
         category = next((name for name, words in CATEGORY_KEYWORDS if tokens.intersection(words)),
                         re.sub(r"[_\-\s]+", " ", next((v for v in values if v), "unknown"))
                         .strip().lower())
@@ -322,6 +332,10 @@ def build_room_candidates(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         # The existing query permits one wall/floor adjacency step, not a flood fill.
         boundary_seeds = [node_id for node_id in membership
                           if nodes[node_id]["label"] == "BoundarySurface"]
+        # Freeze the pre-expansion evidence as well as the seed IDs. Otherwise
+        # paths appended to another seed are reused later in this loop, making
+        # a one-step membership expansion claim multi-step/cyclic provenance.
+        boundary_seed_paths = {node_id: list(membership[node_id]) for node_id in boundary_seeds}
         for boundary_id in boundary_seeds:
             for edge in outgoing[boundary_id] + incoming[boundary_id]:
                 other = edge["target"] if edge["source"] == boundary_id else edge["source"]
@@ -330,7 +344,7 @@ def build_room_candidates(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 if (edge["type"] == "ADJACENT_SURFACE" and other in nodes
                         and nodes[other]["label"] == "BoundarySurface"
                         and pair_categories == {"wall", "floor"}):
-                    for path in list(membership[boundary_id]):
+                    for path in boundary_seed_paths[boundary_id]:
                         include(other, path["source"] + "_surface_adjacency",
                                 path["edge_ids"] + [edge["id"]])
         for boundary_id in list(membership):

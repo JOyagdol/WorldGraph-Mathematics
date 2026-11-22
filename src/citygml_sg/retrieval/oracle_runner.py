@@ -456,6 +456,8 @@ def run_experiment(
                                **{k: case[k] for k in PROVENANCE_FIELDS if k in case},
                                "query_id": case["query_id"], "variant_id": variant,
                                "run_id": run_id,
+                               "method_version": run_manifest["method_version"],
+                               "code_provenance": run_manifest["git"],
                                "graph_snapshot_id": manifest["graph_snapshot_id"]}
                     durations: list[float] = []
                     report: dict[str, Any] | None = None

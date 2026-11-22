@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
+from copy import deepcopy
 from hashlib import sha256
 import json
 from math import isfinite
@@ -25,6 +26,14 @@ ABSTENTION_STATUSES = {"abstained_no_anchor", "abstained_no_evidence"}
 INCOMPLETE_STATUSES = {"solver_incomplete", "execution_failed"}
 VALID_STATUSES = {"completed", *ABSTENTION_STATUSES}
 MTR_POLICY = "N_plus_1_on_retrieval_abstention"
+CONTENT_IDENTITY_FIELDS = (
+    "method_version", "observation_sha256", "config_sha256", "graph_snapshot_sha256",
+    "code_provenance",
+)
+RUN_IDENTITY_FIELDS = (
+    "candidate_count", "candidate_ids_hash", "graph_snapshot_id", "method_version",
+    "config_sha256", "graph_snapshot_sha256", "code_provenance",
+)
 
 
 def _identifier(value: Any, name: str) -> str:
@@ -86,29 +95,52 @@ def _validate_ranking(
     decimals = report.get("score_tie_decimals", 12)
     if type(decimals) is not int or not 0 <= decimals <= 15:
         raise ValueError("score_tie_decimals must be an integer from 0 to 15")
-    keys: list[tuple[float, float, str]] = []
+    opening_policy = report.get("rank_key_policy") == "shared_wall_or_single_opening_v1"
+    keys = []
     for row in ranking:
         score = _number(row.get("score"), "score")
         relation = _number(row.get("relation_numerator"), "relation_numerator")
         if not 0 <= score <= 1 or relation < 0:
             raise ValueError("score must be in [0,1] and active relation numerator nonnegative")
-        if report.get("variant_id", report.get("variant")) == "objects_only" and relation != 0:
+        variant = report.get("variant_id", report.get("variant"))
+        if variant == "objects_only" and relation != 0:
             raise ValueError("objects_only must not use relation evidence for tie-breaking")
-        keys.append((-round(score, decimals), -round(relation, decimals), row["room_id"]))
+        if opening_policy:
+            from citygml_sg.retrieval.opening_pattern_ranker import decode_rank_key
+            obj, probability, auxiliary, active_relation = decode_rank_key(row)
+            obj = _number(obj, "object score key")
+            auxiliary = _number(auxiliary, "auxiliary score key")
+            active_relation = _number(active_relation, "relation numerator key")
+            if (not 0 <= obj <= 1 or not 0 <= auxiliary <= 1
+                    or active_relation != round(relation, decimals)):
+                raise ValueError("Invalid opening-pattern ranking terms")
+            if obj != round(_number(row["object_component_score"], "object component score"), decimals):
+                raise ValueError("Object key differs from component score")
+            if variant == "relations_only" and (obj != 0 or row["object_numerator"] != 0):
+                raise ValueError("relations_only must not rank with object scores")
+            if report["gate_reason"] in {"closed", "disabled"}:
+                if probability or auxiliary or active_relation or obj != round(score, decimals):
+                    raise ValueError("Inactive pattern must use only the object score")
+            elif auxiliary != round(score, decimals):
+                raise ValueError("Auxiliary score key differs from component score")
+            keys.append((-obj, -probability, -auxiliary, -active_relation, row["room_id"]))
+        else:
+            keys.append((-round(score, decimals), -round(relation, decimals), row["room_id"]))
         solver = row.get("solver")
         if exact and (not isinstance(solver, dict) or solver.get("optimality_proven") is not True):
             raise ValueError(
                 "completed exact ranking requires optimality_proven for every candidate"
             )
     if keys != sorted(keys):
-        raise ValueError("ranking has unstable order: score, active relation, canonical Room ID")
-    top_score_tie = len(keys) > 1 and keys[0][0] == keys[1][0]
+        raise ValueError("ranking has unstable order under the declared evidence and Room ID keys")
+    top_score_tie = len(keys) > 1 and (
+        keys[0][:-1] == keys[1][:-1] if opening_policy else keys[0][0] == keys[1][0])
     if exact:
-        groups: dict[tuple[float, float], list[int]] = defaultdict(list)
+        groups = defaultdict(list)
         for rank, key in enumerate(keys, start=1):
-            groups[key[:2]].append(rank)
+            groups[key[:-1]].append(rank)
         for rank, (row, key) in enumerate(zip(ranking, keys), start=1):
-            tied = groups[key[:2]]
+            tied = groups[key[:-1]]
             expected = {
                 "rank": rank, "best_tie_rank": tied[0],
                 "worst_tie_rank": tied[-1], "tie_size": len(tied),
@@ -156,8 +188,9 @@ def evaluate_retrieval(
     metadata_fields = (
         "query_id", "variant_id", *PROVENANCE_FIELDS, "annotation_protocol_version",
         "view_id", "parent_query_id", "graph_snapshot_id", "run_id",
+        *CONTENT_IDENTITY_FIELDS,
     )
-    result = {key: report[key] for key in metadata_fields if key in report}
+    result = {key: deepcopy(report[key]) for key in metadata_fields if key in report}
     if "variant_id" not in result and "variant" in report:
         result["variant_id"] = report["variant"]
     result.update({
@@ -303,12 +336,38 @@ def _paired(by_variant: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     }
 
 
+def _validate_run_identity(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Check a fixed full-pool run without certifying missing legacy provenance."""
+    first = records[0]
+    for field in RUN_IDENTITY_FIELDS:
+        if any(record.get(field) != first.get(field) for record in records[1:]):
+            raise ValueError(f"one full-pool run must share {field}; provenance differs or is missing")
+    # Different queries may use different observations, but cannot silently mix
+    # hashed observations with records whose observation identity was discarded.
+    for field in CONTENT_IDENTITY_FIELDS:
+        present = [record.get(field) is not None for record in records]
+        if any(present) and not all(present):
+            raise ValueError(f"{field} provenance is missing from some evaluation records")
+    supplied = [field for field in CONTENT_IDENTITY_FIELDS if first.get(field) is not None]
+    missing = [field for field in CONTENT_IDENTITY_FIELDS if field not in supplied]
+    return {
+        "status": ("legacy_unverified" if not supplied else
+                   "partial_identity" if missing else "declared_identity_consistent"),
+        "supplied_fields": supplied, "missing_fields": missing,
+        "scope": "supplied run identity equality and per-query observation equality across variants",
+        "limitation": "does not certify annotations or independently rehash source artifacts",
+    }
+
+
 def aggregate_evaluations(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Group exact results by input provenance; never merge conditions as one primary.
 
     Repeated timing trials must be inside each record, not additional query rows.
     Different conditions are returned under ``by_condition`` with an empty primary
     ``by_variant``. Missing or failed queries invalidate their variant's primary.
+    The candidate pool, snapshot, method/config and code identity are fixed for
+    this full-pool protocol. Uniformly missing legacy provenance remains usable
+    for metric arithmetic, with an explicit unverified/partial identity status.
     """
     items = list(records)
     if not items:
@@ -341,14 +400,17 @@ def aggregate_evaluations(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         contract = tuple(record.get(key) for key in (
             "target_room_id", "candidate_count", "candidate_ids_hash", "graph_snapshot_id",
             "annotation_protocol_version", "view_id", "parent_query_id", "run_id",
+            *CONTENT_IDENTITY_FIELDS,
         ))
         contract_key = (*condition, query)
         if contract_key in contracts and contracts[contract_key] != contract:
             raise ValueError(
-                "variants must share query GT, candidate pool, snapshot and provenance"
+                "variants must share query GT, observation, candidate pool, snapshot, "
+                "method/config/code identity and provenance"
             )
         contracts[contract_key] = contract
         grouped[condition].append(record)
+    identity_validation = _validate_run_identity(items)
     conditions = {}
     for condition, condition_records in sorted(grouped.items()):
         by_variant: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -359,13 +421,14 @@ def aggregate_evaluations(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         key = json.dumps(provenance, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         conditions[key] = {
             "provenance": provenance,
+            "identity_validation": deepcopy(identity_validation),
             "by_variant": {variant: _summarize(rows, expected)
                            for variant, rows in sorted(by_variant.items())},
             "paired": _paired(by_variant),
         }
     if len(conditions) > 1:
         return {"status": "separated_conditions", "by_variant": {}, "by_condition": conditions,
-                "paired": {}, "provenance": None}
+                "paired": {}, "provenance": None, "identity_validation": identity_validation}
     condition = next(iter(conditions.values()))
     status = "completed" if all(
         value["status"] == "completed" for value in condition["by_variant"].values()

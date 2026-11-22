@@ -134,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             start = perf_counter()
             config = load_run_config(_path(args.method_config))
+            if config["protocol"]["experiment_stage"] == "paper_table8_shared_wall_or_single_opening":
+                raise ValueError("Use run_paper_table8.py for opening-pattern ranking")
             manifest = read_json(_path(args.manifest))
             timing["config_manifest_load_ms"] = (perf_counter() - start) * 1000
             if args.warmup is not None:

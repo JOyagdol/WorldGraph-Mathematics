@@ -9,6 +9,7 @@ from io import StringIO
 import pytest
 
 from citygml_sg.retrieval.evaluation.oracle_metrics import (
+    CONTENT_IDENTITY_FIELDS,
     VARIANT_IDS,
     aggregate_evaluations,
     candidate_ids_hash,
@@ -47,6 +48,26 @@ def _record(
         "experiment_stage": "oracle_preparation", "input_condition": "researcher_curated",
         "oracle_validation_status": "pending",
     }
+
+
+def _content_identity() -> dict:
+    return {
+        "method_version": "joint_evidence_v1_proposed", "observation_sha256": "a" * 64,
+        "config_sha256": "b" * 64, "graph_snapshot_sha256": "c" * 64,
+        "code_provenance": {"commit": "fixture", "relevant_diff_sha256": "d" * 64},
+    }
+
+
+@pytest.mark.parametrize("status", [
+    "completed", "abstained_no_anchor", "abstained_no_evidence",
+    "solver_incomplete", "execution_failed",
+])
+def test_evaluation_preserves_content_identity_for_every_outcome(status: str) -> None:
+    report = {**_report(status=status), **_content_identity()}
+    result = evaluate_retrieval(report, "A")
+    assert {field: result[field] for field in CONTENT_IDENTITY_FIELDS} == _content_identity()
+    report["code_provenance"]["commit"] = "changed-after-evaluation"
+    assert result["code_provenance"]["commit"] == "fixture"
 
 
 def test_hand_calculated_ranks_1_1_3_and_single_gt_aliases() -> None:
@@ -202,6 +223,68 @@ def test_separate_runs_cannot_be_silently_merged() -> None:
         aggregate_evaluations([first, second])
 
 
+@pytest.mark.parametrize("field", CONTENT_IDENTITY_FIELDS)
+@pytest.mark.parametrize("change", ["different", "missing"])
+def test_paired_ablation_rejects_changed_or_missing_content_identity(field, change) -> None:
+    first = {**_record("q"), **_content_identity()}
+    second = {**_record("q", variant_id="objects_only"), **_content_identity()}
+    if change == "missing":
+        second.pop(field)
+    elif field == "code_provenance":
+        # Same commit with different uncommitted code is a different execution.
+        second[field]["relevant_diff_sha256"] = "e" * 64
+    else:
+        second[field] = "e" * 64
+    with pytest.raises(ValueError, match="variants must share"):
+        aggregate_evaluations([first, second])
+
+
+@pytest.mark.parametrize("field", [
+    "method_version", "config_sha256", "graph_snapshot_sha256", "code_provenance",
+])
+def test_different_queries_cannot_hide_changed_run_identity(field) -> None:
+    first = {**_record("q1"), **_content_identity()}
+    second = {**_record("q2"), **_content_identity()}
+    second[field] = {"commit": "other"} if field == "code_provenance" else "e" * 64
+    with pytest.raises(ValueError, match=f"one full-pool run must share {field}"):
+        aggregate_evaluations([first, second])
+
+
+def test_full_pool_cannot_change_between_queries() -> None:
+    with pytest.raises(ValueError, match="one full-pool run must share candidate_count"):
+        aggregate_evaluations([
+            _record("q1"), _record("q2", order=("A", "B", "C", "D")),
+        ])
+    with pytest.raises(ValueError, match="one full-pool run must share candidate_ids_hash"):
+        aggregate_evaluations([
+            _record("q1"), _record("q2", order=("A", "B", "D")),
+        ])
+
+
+def test_observation_hashes_differ_between_queries_but_presence_is_consistent() -> None:
+    first = {**_record("q1"), **_content_identity()}
+    second = {**_record("q2"), **_content_identity(), "observation_sha256": "e" * 64}
+    result = aggregate_evaluations([first, second])
+    assert result["status"] == "completed"
+    assert result["identity_validation"]["status"] == "declared_identity_consistent"
+    second.pop("observation_sha256")
+    with pytest.raises(ValueError, match="observation_sha256 provenance is missing"):
+        aggregate_evaluations([first, second])
+
+
+def test_legacy_and_uniformly_partial_records_do_not_claim_complete_identity() -> None:
+    records = [_record("q1"), _record("q2")]
+    legacy = aggregate_evaluations(records)
+    assert legacy["status"] == "completed"  # Arithmetic remains available.
+    assert legacy["identity_validation"]["status"] == "legacy_unverified"
+    assert legacy["identity_validation"]["missing_fields"] == list(CONTENT_IDENTITY_FIELDS)
+    for record in records:
+        record["graph_snapshot_sha256"] = "c" * 64
+    partial = aggregate_evaluations(records)
+    assert partial["identity_validation"]["status"] == "partial_identity"
+    assert partial["identity_validation"]["supplied_fields"] == ["graph_snapshot_sha256"]
+
+
 def test_paired_full_objects_improved_tied_worsened_and_missing_queries() -> None:
     records = []
     for query, full_order, objects_order in [
@@ -265,3 +348,37 @@ def test_table_without_measured_timing_is_not_complete() -> None:
     assert table["status"] == "incomplete"
     assert table["rows"][0]["cells"][1] == "100.00"
     assert table["rows"][0]["cells"][5] == "not_measured"
+
+
+@pytest.mark.parametrize("identity_status", [
+    "declared_identity_consistent", "partial_identity", "legacy_unverified",
+])
+def test_completed_table_preserves_identity_limits_in_every_export(identity_status) -> None:
+    records = []
+    for variant in VARIANT_IDS:
+        record = _record("q", variant_id=variant)
+        record["timing_stats"] = {"mean_ms": 12}
+        if identity_status == "declared_identity_consistent":
+            record.update(_content_identity())
+        elif identity_status == "partial_identity":
+            record["graph_snapshot_sha256"] = "c" * 64
+        records.append(record)
+    metrics = aggregate_evaluations(records)
+    table = build_ablation_table(metrics)
+    assert table["status"] == "completed"  # Completion describes metrics/timing only.
+    assert table["identity_validation"] == metrics["identity_validation"]
+    parsed = list(csv.reader(StringIO(table["csv"])))
+    assert parsed[0][-1] == "Identity validation"
+    assert all(row[-1] == identity_status for row in parsed[1:])
+    assert f"Identity validation: `{identity_status}`" in table["markdown"]
+    assert "completion does not certify" in table["markdown"]
+    metrics["identity_validation"]["missing_fields"].append("later_change")
+    assert "later_change" not in table["identity_validation"]["missing_fields"]
+
+
+def test_variant_only_table_labels_identity_unavailable() -> None:
+    metrics = aggregate_evaluations([_record("q")])
+    table = build_ablation_table(metrics["by_variant"])
+    assert table["identity_validation"] == {"status": "unavailable"}
+    assert all(row["cells"][-1] == "unavailable" for row in table["rows"])
+    assert "Identity validation: `unavailable`" in table["markdown"]

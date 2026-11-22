@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 from io import StringIO
 from math import isfinite
 from typing import Any
@@ -42,9 +43,15 @@ def build_ablation_table(
     if metrics_by_variant.get("status") == "separated_conditions":
         raise ValueError("select one provenance condition before exporting a primary table")
     variants = metrics_by_variant.get("by_variant", metrics_by_variant)
+    identity = deepcopy(metrics_by_variant.get("identity_validation", {"status": "unavailable"}))
+    if not isinstance(identity, dict) or identity.get("status") not in {
+        "declared_identity_consistent", "partial_identity", "legacy_unverified", "unavailable",
+    }:
+        raise ValueError("unsupported identity_validation status")
+    identity_status = identity["status"]
     headers = [
         "Variant", f"{metric_label}@1 (%) ↑", f"{metric_label}@3 (%) ↑", "MRR ↑", "MTR ↓",
-        "Mean Time (ms) ↓", "Status",
+        "Mean Time (ms) ↓", "Status", "Identity validation",
     ]
     prefix = "recall" if metric_label == "Recall" else "hit"
     fields = (f"{prefix}_at_1", f"{prefix}_at_3", "mrr", "mtr", "mean_time_ms")
@@ -58,13 +65,14 @@ def build_ablation_table(
             status = "incomplete"
         values = [_display(metrics.get(key), status, percent=index < 2)
                   for index, key in enumerate(fields)]
-        rows.append({"variant_id": variant_id, "status": status, "cells": [label, *values, status]})
+        rows.append({"variant_id": variant_id, "status": status,
+                     "cells": [label, *values, status, identity_status]})
     stream = StringIO(newline="")
     writer = csv.writer(stream, lineterminator="\n")
     writer.writerow(headers)
     writer.writerows(row["cells"] for row in rows)
     markdown = "| " + " | ".join(headers) + " |\n"
-    markdown += "|---|---:|---:|---:|---:|---:|---|\n"
+    markdown += "|---|---:|---:|---:|---:|---:|---|---|\n"
     markdown += "".join("| " + " | ".join(row["cells"]) + " |\n" for row in rows)
     markdown += (
         "\nRecall/Hit are percentages; MRR is a fraction and MTR is a rank. "
@@ -73,10 +81,16 @@ def build_ablation_table(
         "Mean Time is warm online retrieval, including matching, scoring and evidence; "
         "timing repeats are not extra queries. not_run/incomplete/not_measured are not zeros.\n"
     )
+    markdown += (
+        f"\nIdentity validation: `{identity_status}`. Metric/timing completion does not certify "
+        "experiment provenance or annotations. Declared identity consistency checks supplied "
+        "fields; legacy, partial, or unavailable identity leaves provenance unverified.\n"
+    )
     statuses = {row["status"] for row in rows}
     all_measured = all("not_measured" not in row["cells"] for row in rows)
     if statuses == {"completed"} and all_measured:
         status = "completed"
     else:
         status = "not_run" if statuses == {"not_run"} else "incomplete"
-    return {"csv": stream.getvalue(), "markdown": markdown, "rows": rows, "status": status}
+    return {"csv": stream.getvalue(), "markdown": markdown, "rows": rows, "status": status,
+            "identity_validation": identity}

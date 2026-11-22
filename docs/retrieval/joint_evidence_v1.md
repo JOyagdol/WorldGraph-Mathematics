@@ -2,11 +2,24 @@
 
 `joint_evidence_v1_proposed` is a reusable Room matching, scoring, evaluation and timing component for upcoming Oracle experiments. It does not implement perception, certify annotations, or complete the Oracle experiment design. The existing `legacy_heuristic` remains the default single-query method. The reference pipeline remains CityGML **2.0**.
 
-At the initial implementation handoff (2026-11-02), tests had not been executed. After the user authorized Codex to run pytest, retrieval tests passed (135 tests) and the full repository suite passed (159 tests) in the existing Python 3.11.15 environment. One test's UTF-8 CSV/JSONL reads were made explicit for Windows compatibility. No real-data Neo4j experiment or measured retrieval accuracy/latency study has been run. Engineering defaults are not calibrated parameters. See [theory alignment](joint_evidence_theory_alignment.md) before using the method in a paper.
+At the initial implementation handoff (2026-11-02), tests had not been executed. After the user authorized Codex to run pytest, retrieval tests passed (135 tests) and the full repository suite passed (159 tests) in the existing Python 3.11.15 environment. One test's UTF-8 CSV/JSONL reads were made explicit for Windows compatibility. That initial handoff did not include a real-data Neo4j experiment or a measured retrieval accuracy/latency study. Engineering defaults are not calibrated parameters. See [theory alignment](joint_evidence_theory_alignment.md) before using the method in a paper.
 
 ## Entry points and ownership
 
 Paths below are relative to the repository root.
+
+The active paper accuracy entry point is now
+[`run_paper_accuracy.py`](../../scripts/retrieval/run_paper_accuracy.py), with
+[`paper_accuracy_reference.yaml`](../../configs/paper_accuracy_reference.yaml).
+It explicitly selects the original `exact_reference` search and the original
+semantic Room adapter, optionally followed by declared space unions. Geometric
+membership and the v2/v3 speed optimizations are excluded from this entry point.
+The shared method default already remained `exact_reference`; the rollback also
+removes the v2/v3 implementation and dispatch from the active matcher/scorer,
+restoring their pre-optimization source. Requests for withdrawn fast modes raise
+an explicit error. Archived experiments and their source/configuration remain
+separate, and the scoring objective is unchanged. See
+[paper accuracy execution](paper_accuracy_reference.md) for commands and limits.
 
 | Component | Current implementation |
 |---|---|
@@ -27,6 +40,17 @@ The legacy `view_params.py` receives one bounded fix: when an explicit OVG conta
 ## Input and reference contracts
 
 Observations preserve distinct aliases for repeated instances. Labels normalize to Room, Furniture, Installation, Opening and BoundarySurface. Refrigerator/freezer map to fridge, television/display to tv, couch to sofa, and pillar/기둥 to column. Sink, counter, cabinet and storage remain distinct. Wall and floor subtype aliases are canonicalized consistently with the reference adapter; original reference surface subtype is retained.
+
+Reference normalization `semantic_reference_v2_fridge_compounds` additionally
+recognizes fridge/freezer/refrigerator tokens at CamelCase boundaries in Furniture
+product-name fields, such as `IntegratedFrenchDoorFridgeFreezer`. Explicit
+categories still take precedence and the existing category priority is unchanged.
+The extra tokens apply only to Furniture and only to fridge synonyms; they do not
+introduce general substring matching or reclassify other compound product names.
+Stored source names, node IDs, Room membership and observation normalization are
+unchanged. Preserve prior reference-normalization versions and raw runs when
+comparing results; a shared source snapshot does not imply identical normalized
+candidate graphs.
 
 Each observation node has confidence and visibility in finite `[0,1]`, with `w(u)=confidence*visibility`. Legacy object `weight` is ignored with a warning. Relation weights are explicit finite `[0,1]`, or unit weight when omitted. Positive-weight nodes meeting the configured threshold become anchors; excluded nodes lose their incident edges.
 
@@ -66,6 +90,22 @@ s(r) = max_M N_r(M) / Z(A), when Z(A) > 0
 The configurable relation map is identity plus observed ADJACENT_TO→stored TOUCHES/INTERSECTS and observed TOUCHES→stored INTERSECTS. It is not made symmetric. Configured symmetric relations allow endpoint reversal; ABOVE/BELOW use explicit inverse-direction handling.
 
 Objects-only uses exact weighted bipartite matching. Other variants use joint branch-and-bound with a per-Room state budget. Reports expose the algorithm, states, upper bound, termination reason and `optimality_proven`. Budget exhaustion yields `solver_incomplete`, not a certified exact result.
+
+`method.solver_mode: exact_reference` is the sole active solver mode. It uses the
+original branch-and-bound search and evidence policy; the polynomial
+objects-only path remains part of that original implementation. The v2/v3
+optimization code and dispatch have been withdrawn from the current source.
+`exact_pruned_v2` and `exact_pruned_v3` requests are rejected explicitly rather
+than silently mapped to the reference mode.
+
+Historical fast runs require their own frozen source, configuration, inputs and
+raw records. Their implementation and tests are preserved in private archives;
+the current checkout must not be presented as their execution source. Those
+runs can contain different equal-optimal instance mappings and different search
+diagnostics even when candidate objectives and rankings agree. Preserve their
+original solver identities, state/timeout policies and evaluation cohorts.
+The subsequent geometric-reference experiment is a separate map intervention,
+not part of the restored reference search.
 
 ## Execution commands
 
@@ -128,4 +168,20 @@ Default measurement records a first query, three warmups and 30 measured warm re
 
 Outputs include `run_manifest.json`, `resolved_config.json`, `candidate_pool.json`, `graph_inventory.json`, `per_query/<query_id>/<variant>.json`, `timing_runs.jsonl`, `evaluated_queries.json`, `metrics_by_variant.json`, CSV/Markdown ablation tables, and failure analysis. Hashes identify observation bytes, config, graph, candidate pool and relevant code state. Different input/validation conditions are aggregated separately. Preparation exports `not_run`/null values; failed or missing variant rows remain incomplete.
 
+Evaluated records retain the method version, observation/config/snapshot hashes and code provenance, including failure outcomes. Aggregation requires one candidate pool, snapshot, method, resolved run config and code state across the entire full-pool run; variants of the same query must also share the observation hash. The config hash covers the shared run configuration, including all variant definitions, rather than each variant's deliberately different effective weights. Mismatched identities, or mixing present and missing identities, are rejected even when human-readable run/query/snapshot IDs match. Different queries may have different observation hashes.
+
+Older metric records with uniformly absent identity fields remain usable for arithmetic. `identity_validation` marks them `legacy_unverified`, or `partial_identity` when only some fields were supplied; these statuses do not establish experiment provenance. `declared_identity_consistent` means the supplied fields agree under the comparison contract, not that source artifacts were independently rehashed or annotations certified. No missing historical hash is reconstructed or invented.
+
+Table exports preserve this identity status in structured metadata, a CSV/Markdown column and a Markdown note. A table built from a bare variant mapping has `unavailable` identity because its aggregate provenance was not supplied. Table completion reports available metrics and timing; it does not certify provenance or Oracle annotations.
+
 Final observation counts, building/Room scope, annotation procedures, view validation, evaluation split and final parameter selection remain pending. Synthetic fixtures and researcher-curated examples cannot be relabelled `oracle_verified` by passing schema checks.
+
+The separate [reference input preparation](reference_input_preparation.md) component
+offers literal undirected hop scopes and whole-reference vocabulary filtering.
+It does not replace this method's typed Room membership, anchor policy, matcher
+or score, and its output is not a completed retrieval run.
+
+The opt-in [geometry based membership](geometric_membership.md) adapter prepares
+an alternative reference from validated source Room geometry. It keeps the
+legacy builder and scoring defaults unchanged. Comparisons must identify the
+membership ledger separately and use the same reference within each ablation.
