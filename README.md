@@ -1,49 +1,51 @@
 # WorldGraph-Mathematics
 
-Paper-focused development workspace derived from [3DCitySG](https://github.com/JOyagdol/3DCitySG). The upstream project remains independent. This repository supports evidence-backed manuscript completion and reproducible Room retrieval experiments using a CityGML **2.0** World Graph.
+Research code for *Room-Level Indoor Position Estimation as Soft Conjunctive Pattern Matching on a 3D Building Digital Twin World Graph*.
 
-Start with [AGENTS.md](AGENTS.md), [NEXT_SESSION.md](NEXT_SESSION.md), and [the experiment workflow](docs/paper_workflow.md). On the author's workstation, `private/START_NEW_CONVERSATION_ko.md` contains the detailed handoff, manuscript audit, result-note inventory and local asset locations. Private files are intentionally absent from a GitHub clone.
+Which room could produce this view? The system represents visible furniture, doors, windows and their spatial relationships as an **Observed View Graph**. It matches that graph against rooms in a CityGML 2.0 digital twin and returns a ranked list of candidate spaces. On 336 prepared view-graph queries from the e-Type 201 building, the Full method ranked the target first **245 times (72.92%)** and took **62.3 ms per query** on average with the reference map in memory.
 
-## Current implementation status
+![Figure 1. A CityGML building becomes a World Graph, an indoor view becomes an Observed View Graph, and matching produces ranked rooms and supporting evidence.](docs/figures/world-graph-localization-framework.png)
 
-- The inherited `legacy_heuristic` is a historical baseline with its own assumptions and outputs.
-- `joint_evidence_v1_proposed` is an implemented candidate for part of Oracle Evaluation. It is **not automatically the method adopted by the manuscript**.
-- Manuscript-preserving requirements and proposed improvements must have distinct method/config/run identities when their behavior differs.
-- Unit tests and synthetic fixtures verify software contracts. They do not establish real-data accuracy, timing, annotation validity or theoretical claims.
+*Figure 1. The paper’s localization framework. The scores in the diagram illustrate an individual prediction. Table 8 reports the measured results.*
 
-The current working-tree snapshot includes previously uncommitted Oracle components. See [source provenance](docs/upstream_provenance.json); the upstream base commit alone does not contain these changes. The Python package name remains `citygml_sg` to preserve imports and scripts.
+## Table 8 · Room retrieval from a single view
 
-## Install and test
+Each query comes from one rendered view in a single first-floor capture sequence. All three settings searched the same **10 building-wide candidate spaces**. The 336 target views cover E101 (16), the open-plan living room and kitchen E102+E103 (288), and E104 (32). The living room and kitchen count as one target because they form a continuous physical space.
 
-Python 3.10 or later is required. Use a separate virtual environment for this repository:
+| Setting | Hit@1 ↑ | Hit@3 ↑ | MRR ↑ | MTR ↓ | Mean warm time per query (ms) ↓ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full (objects + relations) | **72.92%** | 76.79% | **0.7547** | 3.0446 | 62.305 ± 3.693 |
+| Objects only | 72.32% | **78.27%** | 0.7520 | **3.0417** | **15.201 ± 0.748** |
+| Relations only | 25.30% | 26.19% | 0.2634 | 8.1905 | 40.891 ± 1.928 |
+
+**What did relations add?** Full uses doors, windows and their host walls to resolve ties in object scores when multiple openings share a wall, or when a single wall-hosted opening provides all the scored evidence. The rule applied to 98 queries. Compared with objects only, correct first-place results rose from 243 to 245, and correct first-place results **without a tie** rose from 169 to 203. Top-three hits fell from 263 to 258. Full gained five first-place hits in E101, lost three in the living room and kitchen, and returned no first-place hits in E104. The rule was developed on this sequence. Independent annotation review and evaluation on a held-out capture are pending.
+
+**How to read the metrics.** Hit@1 and Hit@3 count queries whose target appears in the first one or three positions. MRR is mean reciprocal rank and MTR is mean target rank. A stable space ID orders any remaining ties. All 336 queries contribute to each metric. Abstentions (61 Full, 61 objects only, 238 relations only) receive zero hit and reciprocal-rank credit and a target rank of 11.
+
+**What was timed?** On an AMD Ryzen 7 2700X CPU, the timer ran from normalization of the prepared query graph through anchor selection, matching and final ranking or abstention. Each query and setting received one warm-up and three timed runs. The table gives the mean and sample standard deviation of the three 336-query run means. Image processing, map loading and disk I/O were outside the timer. Retrieval ran entirely in memory.
+
+## Table 6 · Three example queries against Neo4j
+
+The earlier Cypher experiment queried the building graph in Neo4j and ranked E102 and E103 as separate rooms. The original retrieval logs and a separate warm profiling run give two timing measurements for each case.
+
+| Query | Target room | Target rank | Original retrieval (ms) | Warm mean (ms) |
+| --- | --- | ---: | ---: | ---: |
+| Kitchen | E103 | 1 | 2086.194 | 14.983 |
+| Living room with TV and sofa | E102 | 1 | 2086.852 | 15.984 |
+| Sparse opening evidence | E204 | 3 | 4033.677 | 55.261 |
+
+Each warm mean covers three measured Cypher calls after warm-up. These queries used the `neo4j` database at `bolt://localhost:7687`. The room query and connection settings are available in the [Cypher generator](src/citygml_sg/retrieval/query_generator/room_localization.py) and [configuration template](configs/default.yaml).
+
+## Run the public example
+
+From the repository root in PowerShell, use Python 3.10 or later. The final command checks the Table 8 ranking rule with synthetic inputs and runs offline.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pytest tests -q
+.\.venv\Scripts\python.exe -m pytest -q tests/retrieval/test_opening_pattern_ranker.py tests/retrieval/test_paper_accuracy_cli.py -k "opening_pattern or table8"
 ```
 
-Codex runs appropriate pytest checks when changing the code and reports the command and outcome. Actual database operations and research benchmarks follow the user's authorized scope. Do not repoint an existing upstream editable installation to this checkout.
+To evaluate your own observations, supply a query manifest, a frozen graph snapshot and a ledger identifying which rooms support each opening-to-wall relationship. The public runner ranks each query once per setting with the native reference solver. The paper timings above come from the repeated in-memory exact-assignment benchmark. See the [Table 8 runner](scripts/retrieval/run_paper_table8.py), [method configuration](configs/paper_table8_opening.yaml) and [Observed View Graph schema](docs/schemas/observed_view_graph.schema.json).
 
-An offline preparation command, which does not run retrieval or connect to a database:
-
-```powershell
-.\.venv\Scripts\python.exe scripts/retrieval/run_oracle_evaluation.py --manifest tests/fixtures/oracle/manifest.json --prepare-only --output-dir data/output/fixture_preparation
-```
-
-The output directory must be new or empty. The fixture is synthetic and must not be reported as a paper experiment.
-
-## Implementation references
-
-- [Joint method contract and execution guide](docs/retrieval/joint_evidence_v1.md)
-- [Method and theory review obligations](docs/retrieval/joint_evidence_theory_alignment.md)
-- [Retrieval documentation](docs/retrieval/README.md)
-- [Observed View Graph schema](docs/schemas/observed_view_graph.schema.json)
-- [Graph schema guide](docs/graph_schema.md)
-- [Project configuration template](configs/default.yaml)
-
-## Public and local files
-
-Git contains code, synthetic fixtures, curated sample data and general instructions. Unpublished manuscripts, detailed research notes, real observations, generated results, credentials and Notion state remain ignored local files. Large original graph exports and capture images may be external read-only assets, listed in the author's private migration manifest; a public clone is not a complete paper dataset.
-
-Never publish a result without its method ID, code revision, resolved configuration, observation/GT/snapshot provenance, candidate pool and raw run evidence.
+The repository includes the implementation, synthetic fixtures, Figure 1 and aggregate results. The full capture sequence, annotations, frozen research map and per-query logs are held locally. The CityGML pipeline derives from [3DCitySG](https://github.com/JOyagdol/3DCitySG). See the [graph schema](docs/graph_schema.md), [retrieval guide](docs/retrieval/README.md) and [source provenance](docs/upstream_provenance.json).
